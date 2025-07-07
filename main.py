@@ -3,10 +3,10 @@ import sys
 from dotenv import load_dotenv
 from google import genai
 from google.genai import types
-from functions.get_files_info import *
-from functions.get_file_content import *
-from functions.write_file import *
-from functions.run_python import *
+from functions.get_files_info import get_files_info, schema_get_files_info
+from functions.get_file_content import get_file_content, schema_get_file_content
+from functions.write_file import write_file, schema_write_file
+from functions.run_python import run_python_file, schema_run_python_file
 
 
 def call_function(function_call_part, verbose=False):
@@ -58,7 +58,7 @@ def main():
 
     - List files and directories
 
-    All paths you provide should be relative to the working directory. You do not need to specify the working directory in your function calls as it is automatically injected for security reasons.
+    All paths you provide should be relative to the working directory (./calculator). You do not need to specify the working directory in your function calls as it is automatically injected for security reasons.
     """
     input = sys.argv
     verbose = False
@@ -72,7 +72,7 @@ def main():
         
 
     if len(input) == 1 and verbose:
-        print("please give input with optional flag -v")
+        print("please give input with optional flag '-v' or '--verbose'" )
 
     input = (" ").join(input[1:])
     client = genai.Client(api_key=api_key)
@@ -86,30 +86,49 @@ def main():
     )
 
     messages = [types.Content(parts = [types.Part.from_text(text=input)], role="user")]
+    proceed = False
+    
+    for i in range(20):
+       
+        try:
+            response = client.models.generate_content(
+                model = 'gemini-2.0-flash-001', 
+                contents = messages,
+                config = types.GenerateContentConfig(
+                    tools = [available_functions],
+                    system_instruction=system_prompt)
+            )
+        except Exception as e:
+            #print(f'Error: {str(e)}')
+            print(messages)
 
-    response = client.models.generate_content(
-        model = 'gemini-2.0-flash-001', 
-        contents = messages,
-        config = types.GenerateContentConfig(
-            tools = [available_functions],
-            system_instruction=system_prompt)
-    )
+        messages.extend([candidate.content for candidate in response.candidates])
+        
+        if response.function_calls:
+            for function_call_part in response.function_calls:
+                function_call_result = call_function(function_call_part, verbose)
+                messages.append(function_call_result)
+                #function_call_response = function_call_result.parts[0].function_response.response
+                # if function_call_response:
+                #     if verbose:
+                #         print(f"-> {function_call_response}")
+                # else:
+                #     raise Exception("fatal error")
+                proceed = True
+                
+        else:    
+            print("no function calls executed")
+            proceed = False
 
-    if response.function_calls:
-        for function_call_part in response.function_calls:
-            function_call_result = call_function(function_call_part, verbose)
-            if function_call_result.parts[0].function_response.response:
-                if verbose:
-                    print(f"-> {function_call_result.parts[0].function_response.response}")
-            else:
-                raise Exception("fatal error")
-
-    else:    
-        print(response.text)
-    if verbose:
-        print(f"User prompt: {input}")
-        print(f"Prompt tokens: {response.usage_metadata.prompt_token_count}")
-        print(f"Response tokens: {response.usage_metadata.candidates_token_count}")
-
+        if proceed == False: 
+            print("Final response:\n", response.text)
+            break
+        
+        # if verbose:
+        #     print(f"User prompt: {input}")
+        #     print(f"Prompt tokens: {response.usage_metadata.prompt_token_count}")
+        #     print(f"Response tokens: {response.usage_metadata.candidates_token_count}")
+        
 if __name__=="__main__":
     main()
+
